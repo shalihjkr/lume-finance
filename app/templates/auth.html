@@ -1,0 +1,19 @@
+{% extends 'base.html' %}
+{% block title %}{{ 'Create account' if registering else 'Log in' }}{% endblock %}
+{% block content %}
+<section class="auth-layout">
+  <div class="auth-story"><span class="eyebrow">A LITTLE CLARITY GOES A LONG WAY</span><h1>{{ 'Your next chapter starts with clarity.' if registering else 'Welcome back to your financial space.' }}</h1><p>{{ 'Make room for the things that matter. Build your own picture of income, spending and the possibilities ahead.' if registering else 'Pick up where you left off. Your transactions, budgets and insights are waiting for you.' }}</p><div class="auth-orbit" aria-hidden="true"><span class="orbit-ring"></span><span class="orbit-ring inner"></span><span class="orbit-core">L</span><span class="orbit-label first">A clearer picture</span><span class="orbit-label second">A calmer routine</span></div><p class="auth-footnote">Your own account. Your own transactions, budgets and preferences.</p></div>
+  <section class="panel auth-panel"><span class="eyebrow">{{ 'LET?S GET YOU STARTED' if registering else 'GOOD TO SEE YOU AGAIN' }}</span><h2>{{ 'Create your account' if registering else 'Log in to Lume' }}</h2><p>{{ 'A fresh space for your financial life.' if registering else 'Enter your details to continue.' }}</p>
+  {% if error %}<div class="notice error" role="alert">{{ error }}</div>{% endif %}
+  <form method="post" class="stack">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    {% if registering %}<label>Your name<input name="name" autocomplete="name" maxlength="80" required value="{{ request.form.get('name','') }}" placeholder="How should we call you?"></label>{% endif %}
+    <label>Email address<input type="email" name="email" autocomplete="email" maxlength="254" required value="{{ request.form.get('email','') }}" placeholder="you@example.com"></label>
+    <label>Password<input type="password" name="password" autocomplete="{{ 'new-password' if registering else 'current-password' }}" {% if registering %}minlength="12"{% endif %} maxlength="128" required placeholder="{{ 'At least 12 characters' if registering else 'Your password' }}" {% if registering %}aria-describedby="password-help"{% endif %}></label>
+    {% if registering %}<p class="help" id="password-help">Use 12?128 characters. A memorable passphrase works well.</p><label>Confirm password<input type="password" name="confirm_password" autocomplete="new-password" minlength="12" maxlength="128" required placeholder="Enter your password again"></label>{% endif %}
+    <button class="auth-submit">{{ 'Create account' if registering else 'Log in' }} <span aria-hidden="true">&rarr;</span></button>
+  </form>
+  <p class="auth-switch">{{ 'Already have an account?' if registering else 'New to Lume?' }} <a href="{{ url_for('auth.login') if registering else url_for('auth.register') }}">{{ 'Log in' if registering else 'Create an account' }}</a></p>
+  </section>
+</section>
+{% endblock %}
