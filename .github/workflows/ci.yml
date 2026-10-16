@@ -1,4 +1,5 @@
-name: Lume Finance CI
+
+name: Lume Finance CI/CD
 
 on:
   push:
@@ -8,24 +9,29 @@ on:
 
 permissions:
   contents: read
+  id-token: write
 
 jobs:
-  test-and-build:
-    name: Tests and Docker build
+  test-and-deploy:
+    name: Test, Build, and Deploy
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 30
+
     env:
       PYTHONDONTWRITEBYTECODE: '1'
-      APP_VERSION: ci
+      APP_VERSION: ${{ github.sha }}
+      AWS_REGION: ${{ vars.AWS_REGION }}
+      ECR_REPOSITORY: ${{ vars.ECR_REPOSITORY }}
+      EC2_INSTANCE_ID: ${{ vars.EC2_INSTANCE_ID }}
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
         with:
           persist-credentials: false
 
       - name: Set up Python
-        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405
         with:
           python-version: '3.13'
           cache: pip
@@ -38,13 +44,129 @@ jobs:
 
       - name: Run pytest
         env:
-          # Fixtures override this with a separate tmp_path database per test.
           DATABASE_PATH: ${{ runner.temp }}/lume-ci-fallback.sqlite3
         run: python -m pytest -v
 
-      # Default success() gating skips both Docker steps if tests fail.
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f
 
       - name: Build image without publishing
-        run: docker buildx build --file Dockerfile --tag lume-finance:ci --load .
+        if: github.event_name == 'pull_request'
+        run: |
+          docker buildx build \
+            --file Dockerfile \
+            --tag lume-finance:ci \
+            --load .
+
+      - name: Configure AWS credentials using OIDC
+        if: github.event_name == 'push'
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Log in to Amazon ECR
+        if: github.event_name == 'push'
+        id: ecr
+        run: |
+          ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+          REGISTRY="${ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
+          echo "registry=${REGISTRY}" >> "$GITHUB_OUTPUT"
+
+          aws ecr get-login-password --region "$AWS_REGION" |
+            docker login --username AWS --password-stdin "$REGISTRY"
+
+      - name: Build and push Docker image
+        if: github.event_name == 'push'
+        env:
+          REGISTRY: ${{ steps.ecr.outputs.registry }}
+        run: |
+          docker buildx build \
+            --file Dockerfile \
+            --tag "${REGISTRY}/${ECR_REPOSITORY}:${GITHUB_SHA}" \
+            --tag "${REGISTRY}/${ECR_REPOSITORY}:latest" \
+            --push .
+
+      - name: Deploy image to EC2 using Systems Manager
+        if: github.event_name == 'push'
+        env:
+          REGISTRY: ${{ steps.ecr.outputs.registry }}
+          IMAGE_TAG: ${{ github.sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          IMAGE_URI="${REGISTRY}/${ECR_REPOSITORY}:${IMAGE_TAG}"
+
+          DEPLOY_SCRIPT=$(cat <<EOF
+          set -eu
+          aws ecr get-login-password --region '${AWS_REGION}' | docker login --username AWS --password-stdin '${REGISTRY}'
+          docker pull '${IMAGE_URI}'
+          docker rm -f lume-finance || true
+          docker run -d \
+            --name lume-finance \
+            --restart unless-stopped \
+            --env-file /opt/lume-finance.env \
+            -p 80:5000 \
+            -v lume-finance-data:/data \
+            '${IMAGE_URI}'
+          for i in \$(seq 1 24); do
+            if curl --fail --silent http://127.0.0.1/health; then
+              echo
+              echo 'Lume Finance health check passed.'
+              exit 0
+            fi
+            sleep 5
+          done
+          docker logs --tail 80 lume-finance
+          echo 'Health check failed.'
+          exit 1
+          EOF
+          )
+
+          PARAMETERS=$(jq -n --arg command "$DEPLOY_SCRIPT" \
+            '{commands: [$command]}')
+
+          COMMAND_ID=$(aws ssm send-command \
+            --instance-ids "$EC2_INSTANCE_ID" \
+            --document-name "AWS-RunShellScript" \
+            --comment "Deploy Lume Finance ${IMAGE_TAG}" \
+            --parameters "$PARAMETERS" \
+            --query 'Command.CommandId' \
+            --output text)
+
+          echo "SSM command ID: ${COMMAND_ID}"
+
+          for i in $(seq 1 60); do
+            STATUS=$(aws ssm get-command-invocation \
+              --command-id "$COMMAND_ID" \
+              --instance-id "$EC2_INSTANCE_ID" \
+              --query 'Status' \
+              --output text 2>/dev/null || true)
+
+            echo "Deployment status: ${STATUS}"
+
+            case "$STATUS" in
+              Success)
+                aws ssm get-command-invocation \
+                  --command-id "$COMMAND_ID" \
+                  --instance-id "$EC2_INSTANCE_ID" \
+                  --query 'StandardOutputContent' \
+                  --output text
+                exit 0
+                ;;
+              Failed|Cancelled|TimedOut)
+                aws ssm get-command-invocation \
+                  --command-id "$COMMAND_ID" \
+                  --instance-id "$EC2_INSTANCE_ID" \
+                  --query '[Status,StandardOutputContent,StandardErrorContent]' \
+                  --output json
+                exit 1
+                ;;
+            esac
+
+            sleep 5
+          done
+
+          echo 'Timed out waiting for deployment command.'
+          exit 1
