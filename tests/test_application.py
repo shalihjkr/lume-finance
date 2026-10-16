@@ -87,11 +87,13 @@ def test_filters_sort_pagination_escape(client,transaction):
 
 def test_preferences(client, transaction):
     client.post('/transactions',data=transaction)
-    for currency,symbol in [('GBP','\u00a3'),('USD','$'),('INR','\u20b9')]:
+    for currency,symbol in [('GBP','\u00a3'),('USD','$')]:
         assert client.post('/settings',data=dict(currency=currency,compact='on')).status_code == 302
         assert (symbol+'12.34').encode() in client.get('/transactions').data
         assert client.get('/api/summary').json['expenses'] == 1234
     assert client.post('/settings',data=dict(currency='EUR')).status_code == 400
+    assert client.post('/settings',data=dict(currency='INR')).status_code == 400
+    assert b'value="INR"' not in client.get('/settings').data
 
 def test_csrf(client,app,transaction):
     app.config['WTF_CSRF_ENABLED'] = True
@@ -144,3 +146,17 @@ def test_screenshot_scenario(client,transaction):
     assert b'-\xc2\xa385.00' not in page
     client.post('/budgets',data=dict(month='2026-10',category='Food',amount='100'))
     assert client.get('/api/summary?month=2026-10').json['remaining']==1500
+
+
+def test_legacy_currency_is_not_silently_changed(client, app):
+    with app.app_context():
+        get_db().execute("UPDATE user_settings SET currency='INR' WHERE user_id=1")
+        get_db().commit()
+    page=client.get('/settings').data
+    assert b'Choose a supported currency' in page
+    assert b'value="INR"' not in page
+    assert b'Your saved INR preference is retained' in page
+    assert client.post('/settings',data=dict(currency='INR')).status_code==400
+    with app.app_context():
+        assert get_db().execute('SELECT currency FROM user_settings WHERE user_id=1').fetchone()[0]=='INR'
+    assert client.post('/settings',data=dict(currency='GBP')).status_code==302

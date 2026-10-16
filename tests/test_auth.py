@@ -73,7 +73,7 @@ def test_login_throttle(app):
 def test_account_isolation(app,client,transaction):
     client.post('/transactions',data=transaction)
     client.post('/budgets',data=dict(month='2026-10',category='Food',amount='10'))
-    client.post('/settings',data=dict(currency='INR',compact='on'))
+    client.post('/settings',data=dict(currency='USD',compact='on'))
     other=app.test_client()
     register(other)
     login(other)
@@ -94,7 +94,7 @@ def test_account_isolation(app,client,transaction):
     assert client.get('/api/summary?month=2026-10').json['budget']==1000
     assert other.get('/api/summary?month=2026-10').json['expenses']==300
     with app.app_context():
-        assert get_db().execute('SELECT currency FROM user_settings WHERE user_id=1').fetchone()[0]=='INR'
+        assert get_db().execute('SELECT currency FROM user_settings WHERE user_id=1').fetchone()[0]=='USD'
 
 
 def token(response):

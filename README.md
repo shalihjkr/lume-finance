@@ -15,7 +15,7 @@ The interface uses a dark terracotta-and-black palette, warm amber highlights, c
 | Transactions | Add, edit, delete with confirmation, optional notes, description search, category/type/date filters, date/amount sorting and 15 records per page |
 | Budgets | Monthly category limits, update/remove actions, actual spending, remaining amount, percentage used and status bars |
 | Analytics | Daily income/expense trends, spending doughnut chart, six-month comparison and ranked category totals |
-| Settings | GBP, USD and INR display currencies and compact table spacing, saved per user |
+| Settings | GBP and USD display currencies and compact table spacing, saved per user |
 | Reliability | Automatic database initialisation, versioned schema migration, validation, centralised error handling and health endpoint |
 | Local demo | Explicitly labelled fictional data, repeatable seeding for a chosen registered account |
 | Tests | Isolated pytest coverage of calculations, CRUD, accounts, access controls, APIs and migrations |
@@ -124,7 +124,7 @@ Save the same category and month again to update its limit. Removing a budget do
 
 ### Currency preferences
 
-GBP, USD and INR change formatting and labels only. **No currency conversion takes place.** Keep an account's records in one consistent currency. Formatting includes currency symbols, two decimal places and Indian digit grouping for INR. Compact spacing affects transaction tables only.
+GBP and USD are available in Settings and change formatting and labels only. **No currency conversion takes place.** Keep an account's records in one consistent currency. Formatting includes currency symbols and two decimal places. INR is no longer offered or accepted as a new Settings selection. Existing accounts with saved INR preferences keep their original formatting until they explicitly select GBP or USD; amounts are never automatically relabelled. Compact spacing affects transaction tables only.
 
 ## Optional fictional sample data
 

@@ -121,7 +121,7 @@ def settings():
     error=None
     if request.method=='POST':
         currency=request.form.get('currency')
-        if currency not in ('GBP','USD','INR'): error='Choose a supported currency.'
+        if currency not in ('GBP','USD'): error='Choose a supported currency.'
         else:
             get_db().execute('UPDATE user_settings SET currency=?,compact=? WHERE user_id=?',(currency,int(request.form.get('compact')=='on'),owner_id()))
             get_db().commit(); flash('Preferences saved.','success')
