@@ -26,7 +26,7 @@ def month_now(): return date.today().strftime('%Y-%m')
 
 def valid_month(value):
     try:
-        if len(value)!=7 or date.fromisoformat(value+'-01').strftime('%Y-%m')!=value: raise ValueError()
+        if len(value)!=7 or date.fromisoformat(value+'-01').isoformat()[:7]!=value: raise ValueError()
     except (ValueError,TypeError): raise ValueError('Choose a valid month.')
     return value
 

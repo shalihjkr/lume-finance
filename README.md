@@ -312,7 +312,7 @@ A temporary real Flask server was also checked over HTTP for public pages, journ
 - Journal articles are maintained in source code; there is no CMS.
 - SQLite remains the database. Native `python app.py` uses the Flask development server; Docker uses Gunicorn.
 - Public deployment still needs HTTPS, Secure cookies, broader abuse controls, operational monitoring and scheduled backups. Docker now supplies a production WSGI server.
-- Docker packaging is implemented below. GitHub Actions, Amazon ECR and AWS EC2 deployment have **not** been implemented.
+- Docker packaging is implemented below. A first-stage GitHub Actions CI workflow is prepared under `.github/workflows/ci.yml`; its first successful GitHub run is still pending. Amazon ECR and AWS EC2 deployment have **not** been implemented.
 
 The application uses configurable ports/version/storage, binds to `0.0.0.0` and exposes `/health`. Docker packaging prepares it for future deployment; it does not complete the CI/CD pipeline.
 
@@ -535,7 +535,7 @@ On **15 October 2026**, the user confirmed that the normal application container
 - Requests for login, the dashboard, static assets and the chart API in the application logs.
 - Repeated `/health` requests from the container health probe.
 
-This records the user's successful local run separately from the isolated automated checks above. The screenshots alone do not verify the mount source or show every health response status; use the inspection and health commands in this README to check those details when needed. The initial missing-secret startup error was resolved through external configuration, without rebuilding the image. GitHub Actions and AWS deployment remain future work.
+This records the user's successful local run separately from the isolated automated checks above. The screenshots alone do not verify the mount source or show every health response status; use the inspection and health commands in this README to check those details when needed. The initial missing-secret startup error was resolved through external configuration, without rebuilding the image. The first-stage GitHub Actions CI configuration is documented below; registry publishing and AWS deployment remain future work.
 
 For everyday operation, reuse the configured container:
 
@@ -570,6 +570,72 @@ The Docker volume lives in Docker Desktop-managed Linux storage, not automatical
 
 ### Deployment boundary and references
 
-This packaging can later be tagged/pushed to ECR and run on EC2, but no registry push, AWS resource, reverse proxy or GitHub Actions workflow has been created. Keep one application container per SQLite volume, mount persistent local storage, supply secrets externally, and configure HTTPS/proxy/session security before public exposure. Multi-host SQLite sharing and automatic scaling are outside this implementation.
+This packaging can later be tagged/pushed to ECR and run on EC2, but no registry push, AWS resource or reverse proxy has been created. The first-stage GitHub Actions workflow below only tests and builds the image. Keep one application container per SQLite volume, mount persistent local storage, supply secrets externally, and configure HTTPS/proxy/session security before public exposure. Multi-host SQLite sharing and automatic scaling are outside this implementation.
 
 References: [Official Python image](https://hub.docker.com/_/python), [Docker volume persistence](https://docs.docker.com/engine/storage/volumes/), [Gunicorn settings](https://gunicorn.org/reference/settings/), and [Gunicorn termination signals](https://gunicorn.org/signals/).
+
+## GitHub Actions CI: stage 1
+
+Repository: [shalihjkr/lume-finance](https://github.com/shalihjkr/lume-finance).
+
+The workflow is defined in `.github/workflows/ci.yml`. It triggers on pushes to `main` and pull requests targeting `main`, using a GitHub-hosted `ubuntu-24.04` runner.
+
+One job, **Tests and Docker build**, performs these steps in order:
+
+1. Check out the triggering commit with persisted Git credentials disabled.
+2. Set up Python 3.13, matching the Docker image's Python minor version, and cache pip downloads using `requirements.txt` as the cache key input.
+3. Upgrade pip and install `requirements.txt`, which already contains pytest and all application/testing dependencies. The existing non-Windows Gunicorn dependency is also installed on Ubuntu.
+4. Run the existing command `python -m pytest -v`.
+5. Only after all previous steps pass, configure Docker Buildx.
+6. Build the existing Dockerfile with `docker buildx build --file Dockerfile --tag lume-finance:ci --load .`.
+
+Normal GitHub Actions success gating stops subsequent steps on failure. There is no `continue-on-error`, `always()` build override, registry login, image push, container deployment or AWS step. The image is loaded into the temporary runner's Docker engine and disappears when that runner is discarded. This stage does not run the optional Docker HTTP/persistence verification script automatically.
+
+The workflow has a 20-minute timeout and read-only `contents` permissions. Third-party actions are pinned to verified full commit SHAs, with version comments for maintenance. Update those pins deliberately when upgrading actions.
+
+### Test storage and secrets
+
+`tests/conftest.py` remains unchanged: each test receives a separate pytest `tmp_path` SQLite database with a fixture-owned test account. Migration and seeding tests also use temporary storage. The pytest step sets a fallback `DATABASE_PATH` under the runner's temporary directory; explicit test configuration takes precedence. The workflow does not import the native application's entry point to initialise your real database, run demo seeding against your workspace or mount a production volume.
+
+No GitHub repository secrets, production `SECRET_KEY`, Docker credentials or AWS credentials are required for this stage. Tests supply test-only secrets through their fixtures. Docker only builds the image; it does not start Gunicorn, so the container startup requirement for an external secret does not apply to the build.
+
+The existing `.dockerignore` still controls the local-path build context, excluding environment files, personal databases, backups and other local artifacts. Existing tests and Docker configuration are unchanged. One portability fix in `app/services/finance_service.py` replaces the month validator's OS-dependent `strftime` comparison with `date.isoformat()[:7]`. The original early-year API test reproduced a failure on Linux before the fix; Windows and Linux now apply the same ISO month validation. No financial calculation or database schema was changed.
+
+### Repository data review
+
+On 16 October 2026, the public repository's `main` branch matched local commit `ef3d45813bccf1b103591253e631b96b4aacec44`. At review time, the public repository had one branch, one commit and no tags.
+
+The tracked files and reachable Git history were reviewed for sensitive filenames, SQLite file signatures, private-key/provider-token patterns, and matches for the local deployment secrets without printing secret values. No findings were detected. `.env`, `.env.docker`, the local SQLite database and its backup are excluded; `.env.example` remains tracked as a placeholder-only setup example. Fictional demo records and test-only credentials in tests are intentional.
+
+This is a scoped review, not a guarantee that every possible secret format can be detected. `.gitignore` prevents new untracked files from being added normally; it does not remove files already committed. If a real credential is ever published, revoke/rotate it and address repository history as well as the current file.
+
+### Commit, push and check the first run
+
+Review and publish only the intended workflow and documentation changes from the existing `main` branch:
+
+```powershell
+Set-Location "D:\Lume Finance"
+git branch --show-current
+git status --short
+git add .github/workflows/ci.yml app/services/finance_service.py README.md
+git diff --cached --check
+git diff --cached
+git commit -m "Add CI tests and Docker build workflow"
+git push origin main
+```
+
+If GitHub requires pull requests, commit on a feature branch and open a pull request targeting `main`; the pull-request trigger runs the same checks. No force push is needed.
+
+After pushing, open [repository Actions](https://github.com/shalihjkr/lume-finance/actions), choose **Lume Finance CI**, and open the run for the pushed commit. Confirm that **Run pytest** passes before **Set up Docker Buildx** and **Build image without publishing** run. A green overall result for that commit is the evidence that this workflow succeeded on GitHub. For a failure, inspect the failing step and fix its error before treating the stage as working. If no run appears, check the branch, workflow path and repository Actions settings.
+
+To require this result before merging, the repository owner can later add **Tests and Docker build** as a required check in the `main` branch rules. This workflow does not change repository rules automatically.
+
+### Validation status
+
+- Existing test suite rerun on native Windows and in the Linux Python 3.13.16 container: **63 passed on each**, without modifying tests or the real application database.
+- Workflow validated with checksum-verified **actionlint v1.7.12**: no errors.
+- The exact workflow Buildx command completed locally with tag `lume-finance:ci`, including the Linux date fix; no registry push was performed.
+- The public repository had **zero GitHub Actions runs** when inspected before publishing this workflow.
+- **GitHub execution is pending**: the workflow is prepared locally and has not been committed or pushed by the implementation agent. A local lint/test/build result is not a successful hosted Actions run.
+
+References: [GitHub Python CI](https://docs.github.com/en/actions/tutorials/build-and-test-code/python), [actions/checkout](https://github.com/actions/checkout), [actions/setup-python](https://github.com/actions/setup-python), and [Docker Buildx action](https://github.com/docker/setup-buildx-action).
